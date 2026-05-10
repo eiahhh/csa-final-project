@@ -173,7 +173,7 @@ add_item:
     mov eax, 3
     mov ebx, 0
     mov ecx, edi                ; Copy base folder address
-    add ecx, 40                 ; Jump 40 bytes down for Qty
+    add ecx, 48                 ; Jump 48 bytes down for Price
     mov edx, 8
     int 80h
 
