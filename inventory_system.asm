@@ -68,6 +68,22 @@ section .data
     disp_price       db 0Ah, "Price: "
     disp_price_len   equ $ - disp_price
 
+;---Generate Report
+    report_header db 0Ah, "=== INVENTORY REPORT ===", 0Ah
+    report_header_len equ $ - report_header
+    total_value_msg db "Total Stock Value: "
+    total_value_msg_len equ $ - total_value_msg
+    low_stock_msg db 0Ah, "Low Stock Items (Quantity < 5): ", 0Ah
+    low_stock_msg_len equ $ - low_stock_msg
+    no_low_stock db "None", 0Ah
+    no_low_stock_len equ $ - no_low_stock
+    low_stock_item db "ID: "
+    low_stock_item_len equ $ - low_stock_item
+    newline db 0Ah
+    newline_len equ 1
+
+LOW_STOCK_THRESHOLD equ 5
+
 ;---State Variable
     item_count dd 0 ; START AT 0 (The inventory is now empty by default)
     
@@ -79,6 +95,8 @@ section .bss
     
 ;---The Empty "Array of Structures"
     inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
+
+    num_buffer resb 16 ; for report calculations
 
 section .text
     global _start
@@ -96,6 +114,48 @@ compute_len:
     jmp .len_loop
 .len_done:
     pop esi
+    ret
+
+;---Convert string to integer
+; Input: ESI = pointer to string
+; Output: EAX = integer value
+atoi:
+    xor eax, eax
+.loop:
+    movzx ebx, byte [esi]
+    cmp bl, '0'
+    jb .done
+    cmp bl, '9'
+    ja .done
+    cmp bl, 0Ah  ; newline
+    je .done
+    sub bl, '0'
+    imul eax, 10
+    add eax, ebx
+    inc esi
+    jmp .loop
+.done:
+    ret
+
+;---Convert integer to string
+; Input: EAX = number
+; Output: num_buffer contains the string, EDI points to start
+itoa:
+    mov edi, num_buffer + 15
+    mov byte [edi], 0  ; null terminate
+    dec edi
+    mov byte [edi], 0Ah  ; newline
+    dec edi
+    mov ecx, 10
+.itoa_loop:
+    xor edx, edx
+    div ecx
+    add dl, '0'
+    mov [edi], dl
+    dec edi
+    test eax, eax
+    jnz .itoa_loop
+    inc edi  ; point to first digit
     ret
 
 
@@ -139,8 +199,16 @@ main_menu:
     je delete_item
     cmp al, '4' ;
     je search_item ;
+    cmp al, '5'
+    je display_inventory
+    cmp al, '6'
+    je generate_report
     cmp al, '7'
     je exit
+
+;---Display Inventory (stub)
+display_inventory:
+    jmp main_menu
 
 ;---Prompt for Add item
 add_item:
@@ -514,6 +582,122 @@ search_item:
     int 80h
     sub esi, 48                 ; restore ESI to record base
 
+    jmp main_menu
+
+;---Generate Report
+generate_report:
+    ; Print report header
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, report_header
+    mov edx, report_header_len
+    int 80h
+
+    ; Print low stock message
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, low_stock_msg
+    mov edx, low_stock_msg_len
+    int 80h
+
+    ; Initialize total_value = 0 (EDI)
+    xor edi, edi
+
+    ; Initialize low_stock_count = 0 (EBP)
+    xor ebp, ebp
+
+    mov ecx, [item_count]
+    cmp ecx, 0
+    je .no_items
+
+    mov esi, inventory
+
+.item_loop:
+    ; Convert quantity to integer
+    push esi
+    add esi, 40  ; quantity field
+    call atoi
+    mov ebx, eax  ; EBX = quantity
+    pop esi
+
+    ; Convert price to integer
+    push esi
+    add esi, 48  ; price field
+    call atoi
+    ; EAX = price
+
+    ; Calculate value = quantity * price
+    imul eax, ebx
+    add edi, eax  ; total_value += value
+
+    ; Check for low stock
+    cmp ebx, LOW_STOCK_THRESHOLD
+    jge .not_low
+
+    ; Low stock item found
+    inc ebp
+
+    ; Print "ID: "
+    push esi
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, low_stock_item
+    mov edx, low_stock_item_len
+    int 80h
+
+    ; Print actual ID
+    call compute_len
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+
+    ; Print newline
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, newline_len
+    int 80h
+
+    pop esi
+
+.not_low:
+    add esi, 56  ; next item
+    dec ecx
+    jnz .item_loop
+
+    ; Check if no low stock items
+    cmp ebp, 0
+    jne .print_total
+
+    ; Print "None"
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, no_low_stock
+    mov edx, no_low_stock_len
+    int 80h
+
+.print_total:
+    ; Print total value message
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, total_value_msg
+    mov edx, total_value_msg_len
+    int 80h
+
+    ; Convert total_value (EDI) to string
+    mov eax, edi
+    call itoa
+
+    ; Print the number
+    mov edx, num_buffer + 16
+    sub edx, edi  ; length
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, edi
+    int 80h
+
+.no_items:
     jmp main_menu
 
 ;---Prompt for exit program
