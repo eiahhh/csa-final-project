@@ -14,10 +14,10 @@ section .data
                 db "4. Search Item", 0Ah
                 db "5. Display Inventory", 0Ah
                 db "6. Generate Report", 0Ah
-                db "7. Exit", 10, 10
+                db "7. Exit", 0Ah, 0Ah
     menu_len equ $ - menu
 
-    footer db "========================================", 10
+    footer db "========================================", 0Ah
            db "Enter your choice (1-7): "
     footer_len equ $ - footer
 
@@ -129,7 +129,7 @@ add_item:
     mov edi, inventory  ; Step 1: Base Address
     add edi, eax    ; Step 2: Add Offset (EDI now points to empty slot)
     
-    mov esi, temp_id37777777777
+    mov esi, temp_id
     mov eax, [esi]          
     mov [edi], eax          
     mov eax, [esi+4]        
