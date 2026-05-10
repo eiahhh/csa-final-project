@@ -84,6 +84,17 @@ section .data
 
 LOW_STOCK_THRESHOLD equ 5
 
+;---Exit
+    exit_msg db 0Ah, "========================================", 0Ah
+             db "  Data saved successfully. Goodbye!", 0Ah
+             db "========================================", 0Ah
+    exit_msg_len equ $ - exit_msg
+    save_err_msg db 0Ah, "[ERROR] Could not save data!", 0Ah
+    save_err_msg_len equ $ - save_err_msg
+    filename db "inventory.dat", 0
+    separator db ","
+    separator_len equ 1
+
 ;---State Variable
     item_count dd 0 ; START AT 0 (The inventory is now empty by default)
     
@@ -97,6 +108,8 @@ section .bss
     inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
 
     num_buffer resb 16 ; for report calculations
+
+    file_fd resd 1
 
 section .text
     global _start
@@ -700,8 +713,126 @@ generate_report:
 .no_items:
     jmp main_menu
 
-;---Prompt for exit program
+;---Exit: Save data, display message, terminate
 exit:
+    ; --- Open file for writing (create/truncate) ---
+    mov eax, 5              ; sys_open
+    mov ebx, filename
+    mov ecx, 0241h          ; O_WRONLY | O_CREAT | O_TRUNC
+    mov edx, 0644o          ; permissions rw-r--r--
+    int 80h
+
+    cmp eax, 0
+    jl .save_error           ; if negative, file open failed
+
+    mov [file_fd], eax       ; store file descriptor
+
+    ; --- Loop through inventory and write each record ---
+    mov ecx, [item_count]
+    cmp ecx, 0
+    je .close_file           ; nothing to save
+
+    mov esi, inventory
+
+.save_loop:
+    push ecx                 ; preserve loop counter
+
+    ; Write ID
+    call compute_len         ; ESI = ID field, EDX = length
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, esi
+    int 80h
+
+    ; Write separator ","
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, separator
+    mov edx, separator_len
+    int 80h
+
+    ; Write Name
+    push esi
+    add esi, 8               ; offset to Name field
+    call compute_len
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, esi
+    int 80h
+    pop esi
+
+    ; Write separator
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, separator
+    mov edx, separator_len
+    int 80h
+
+    ; Write Quantity
+    push esi
+    add esi, 40              ; offset to Quantity field
+    call compute_len
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, esi
+    int 80h
+    pop esi
+
+    ; Write separator
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, separator
+    mov edx, separator_len
+    int 80h
+
+    ; Write Price
+    push esi
+    add esi, 48              ; offset to Price field
+    call compute_len
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, esi
+    int 80h
+    pop esi
+
+    ; Write newline after each record
+    mov eax, 4
+    mov ebx, [file_fd]
+    mov ecx, newline
+    mov edx, newline_len
+    int 80h
+
+    add esi, 56              ; move to next record
+    pop ecx                  ; restore loop counter
+    dec ecx
+    jnz .save_loop
+
+.close_file:
+    ; --- Close the file ---
+    mov eax, 6              ; sys_close
+    mov ebx, [file_fd]
+    int 80h
+
+    ; --- Display exit message ---
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, exit_msg
+    mov edx, exit_msg_len
+    int 80h
+
+    ; --- Terminate program ---
+    mov eax, 1
+    xor ebx, ebx
+    int 80h
+
+.save_error:
+    ; --- Display error message, then exit anyway ---
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, save_err_msg
+    mov edx, save_err_msg_len
+    int 80h
+
     mov eax, 1
     xor ebx, ebx
     int 80h
