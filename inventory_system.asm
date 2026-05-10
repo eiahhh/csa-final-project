@@ -55,6 +55,19 @@ section .data
     delete_success   db 0Ah, "[SUCCESS] Item deleted!", 0Ah
     delete_success_len equ $ - delete_success
 
+;---Search Item
+    search_id_prompt db 0Ah, "Enter Item ID to Search: "
+    search_id_len    equ $ - search_id_prompt
+    
+    disp_id          db 0Ah, "ID: "
+    disp_id_len      equ $ - disp_id
+    disp_name        db 0Ah, "Name: "
+    disp_name_len    equ $ - disp_name
+    disp_qty         db 0Ah, "Quantity: "
+    disp_qty_len     equ $ - disp_qty
+    disp_price       db 0Ah, "Price: "
+    disp_price_len   equ $ - disp_price
+
 ;---State Variable
     item_count dd 0 ; START AT 0 (The inventory is now empty by default)
     
@@ -69,6 +82,22 @@ section .bss
 
 section .text
     global _start
+
+compute_len:
+    push esi
+    xor edx, edx
+.len_loop:
+    cmp byte [esi], 0Ah
+    je .len_done
+    cmp byte [esi], 0
+    je .len_done
+    inc esi
+    inc edx
+    jmp .len_loop
+.len_done:
+    pop esi
+    ret
+
 
 _start:
 
@@ -108,6 +137,8 @@ main_menu:
     je update_item
     cmp al, '3'
     je delete_item
+    cmp al, '4' ;
+    je search_item ;
     cmp al, '7'
     je exit
 
@@ -377,6 +408,111 @@ delete_item:
     mov ecx, delete_success
     mov edx, delete_success_len
     int 80h
+
+    jmp main_menu
+
+;---Search Item
+search_item:
+
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, search_id_prompt
+    mov edx, search_id_len
+    int 80h
+
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, search_id
+    mov edx, 8
+    int 80h
+
+    mov ecx, [item_count]
+    cmp ecx, 0
+    je .search_not_found
+
+    mov esi, inventory
+    mov eax, [search_id]
+
+.search_check_loop:
+    mov ebx, [esi]
+    cmp eax, ebx
+    je .search_found
+
+    add esi, 56
+    dec ecx
+    jnz .search_check_loop
+
+.search_not_found:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, not_found
+    mov edx, not_found_len
+    int 80h
+    jmp main_menu
+
+.search_found:
+
+    ; --- Print "ID: "
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_id
+    mov edx, disp_id_len
+    int 80h
+
+    ; --- Print Actual ID
+    call compute_len            ; ESI already at record base; EDX = actual length
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+
+    ; --- Print "Name: "
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_name
+    mov edx, disp_name_len
+    int 80h
+
+    ; --- Print Actual Name
+    add esi, 8                  ; point ESI to name field
+    call compute_len            ; EDX = actual length of name
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+    sub esi, 8                  ; restore ESI to record base
+
+    ; --- Print "Quantity: "
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_qty
+    mov edx, disp_qty_len
+    int 80h
+
+    ; --- Print Actual Quantity
+    add esi, 40                 ; point ESI to quantity field
+    call compute_len            ; EDX = actual length of quantity
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+    sub esi, 40                 ; restore ESI to record base
+
+    ; --- Print "Price: "
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_price
+    mov edx, disp_price_len
+    int 80h
+
+    ; --- Print Actual Price
+    add esi, 48                 ; point ESI to price field
+    call compute_len            ; EDX = actual length of price
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+    sub esi, 48                 ; restore ESI to record base
 
     jmp main_menu
 
