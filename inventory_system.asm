@@ -67,6 +67,25 @@ section .data
     disp_qty_len     equ $ - disp_qty
     disp_price       db 0Ah, "Price: "
     disp_price_len   equ $ - disp_price
+    
+;---Display Inventory
+    disp_header         db 0Ah, "========================================", 0Ah
+                        db "     CURRENT INVENTORY", 0Ah
+                        db "========================================", 0Ah
+    disp_header_len     equ $ - disp_header
+    disp_col_header     db "ID        NAME                    QTY      PRICE   ", 0Ah
+                        db "-------------------------------------------------", 0Ah
+    disp_col_len        equ $ - disp_col_header
+    disp_sep            db "-------------------------------------------------", 0Ah
+    disp_sep_len        equ $ - disp_sep
+    disp_empty_msg       db 0Ah, "[INFO] Inventory is empty.", 0Ah
+    disp_empty_len      equ $ - disp_empty_msg
+    disp_total_label    db "Total Items: "
+    disp_total_len      equ $ - disp_total_label
+    
+    ;---Column Padding
+    pad_spaces          db "                                "
+    pad_spaces_len      equ $ - pad_spaces
 
 ;---Generate Report
     report_header db 0Ah, "=== INVENTORY REPORT ===", 0Ah
@@ -107,7 +126,8 @@ section .bss
 ;---The Empty "Array of Structures"
     inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
 
-    num_buffer resb 16 ; for report calculations
+    num_buffer  resb 16 ; for report calculations
+    num_buf     resb 12 ; for print_uint32
 
     file_fd resd 1
 
@@ -171,7 +191,6 @@ itoa:
     inc edi  ; point to first digit
     ret
 
-
 _start:
 
 main_menu:
@@ -218,10 +237,6 @@ main_menu:
     je generate_report
     cmp al, '7'
     je exit
-
-;---Display Inventory (stub)
-display_inventory:
-    jmp main_menu
 
 ;---Prompt for Add item
 add_item:
@@ -596,6 +611,382 @@ search_item:
     sub esi, 48                 ; restore ESI to record base
 
     jmp main_menu
+    
+;---Display Inventory
+display_inventory:
+    ; print section header
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_header
+    mov edx, disp_header_len
+    int 80h
+ 
+    ; check if inventory is empty
+    mov eax, [item_count]
+    cmp eax, 0
+    je disp_empty
+ 
+    ; print column header
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_col_header
+    mov edx, disp_col_len
+    int 80h
+ 
+    ; loop: ESI = first record, ECX = item count
+    mov esi, inventory
+    mov ecx, [item_count]
+ 
+disp_row_loop:
+    push ecx
+ 
+    ; --- ID: print value then pad to width 10 ---
+    mov ecx, 10             ; column width for ID
+    call print_padded_8     ; prints [ESI+0..7] then spaces to fill col width
+ 
+    ; --- Name
+    add esi, 8
+    mov ecx, 24             ; column width for Name
+    call print_padded_32    
+    sub esi, 8
+ 
+    ; --- Quantity
+    add esi, 40
+    mov ecx, 9              ; column width for Qty
+    call print_padded_8
+    sub esi, 40
+ 
+    ; --- Price
+    add esi, 48
+    call compute_len
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+    sub esi, 48
+    
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, newline_len
+    int 80h
+ 
+    add esi, 56             ; advance to next record
+    pop ecx
+    dec ecx
+    jnz disp_row_loop
+ 
+    ;---Footer: separator + total count
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_sep
+    mov edx, disp_sep_len
+    int 80h
+    
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_total_label
+    mov edx, disp_total_len
+    int 80h
+ 
+    mov eax, [item_count]
+    call print_uint32
+ 
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, newline_len
+    int 80h
+ 
+    jmp main_menu
+    
+disp_empty:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, disp_empty_msg
+    mov edx, disp_empty_len
+    int 80h
+    jmp main_menu
+
+;---Subroutines
+print_field_8:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edi, esi
+    mov ecx, 8
+.pf8_scan:
+    cmp byte [edi], 0Ah
+    je  .pf8_emit
+    cmp byte [edi], 0
+    je  .pf8_emit
+    inc edi
+    dec ecx
+    jnz .pf8_scan
+.pf8_emit:
+    mov edx, edi
+    sub edx, esi            ; length in bytes
+    cmp edx, 0
+    je  .pf8_nl
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+.pf8_nl:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, 1
+    int 80h
+ 
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+ 
+print_field_32:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edi, esi
+    mov ecx, 32
+.pf32_scan:
+    cmp byte [edi], 0Ah
+    je  .pf32_emit
+    cmp byte [edi], 0
+    je  .pf32_emit
+    inc edi
+    dec ecx
+    jnz .pf32_scan
+.pf32_emit:
+    mov edx, edi
+    sub edx, esi
+    cmp edx, 0
+    je  .pf32_nl
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+.pf32_nl:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, newline
+    mov edx, 1
+    int 80h
+ 
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+ 
+print_inline_8:
+    push eax
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edi, esi
+    mov ecx, 8
+.pi8_scan:
+    cmp byte [edi], 0Ah
+    je  .pi8_emit
+    cmp byte [edi], 0
+    je  .pi8_emit
+    inc edi
+    dec ecx
+    jnz .pi8_scan
+.pi8_emit:
+    mov edx, edi
+    sub edx, esi            ; printed length
+    push edx                ; save length for caller (returned in EBX below)
+    cmp edx, 0
+    je  .pi8_done
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+.pi8_done:
+    pop ebx                 ; EBX = number of bytes printed
+ 
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+    ret
+ 
+print_inline_32:
+    push eax
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edi, esi
+    mov ecx, 32
+.pi32_scan:
+    cmp byte [edi], 0Ah
+    je  .pi32_emit
+    cmp byte [edi], 0
+    je  .pi32_emit
+    inc edi
+    dec ecx
+    jnz .pi32_scan
+.pi32_emit:
+    mov edx, edi
+    sub edx, esi
+    push edx
+    cmp edx, 0
+    je  .pi32_done
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, esi
+    int 80h
+.pi32_done:
+    pop ebx                 ; EBX = bytes printed
+ 
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+    ret
+ 
+print_padded_8:
+    push eax
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edx, ecx            ; save column width in EDX
+ 
+    call print_inline_8     ; prints field; EBX = chars printed
+ 
+    ; pad = column_width - printed_len
+    mov ecx, edx
+    sub ecx, ebx            ; ECX = number of spaces needed
+    cmp ecx, 0
+    jle .pp8_done
+ 
+    ; Write ECX spaces from pad_spaces
+    cmp ecx, 32
+    jle .pp8_write
+    mov ecx, 32             ; clamp to buffer size
+.pp8_write:
+    mov eax, 4
+    mov ebx, 1
+    mov edx, ecx
+    mov ecx, pad_spaces
+    int 80h
+ 
+.pp8_done:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+    ret
+ 
+print_padded_32:
+    push eax
+    push ecx
+    push edx
+    push esi
+    push edi
+ 
+    mov edx, ecx            ; save column width
+ 
+    call print_inline_32    ; prints field; EBX = chars printed
+ 
+    mov ecx, edx
+    sub ecx, ebx            ; spaces needed
+    cmp ecx, 0
+    jle .pp32_done
+ 
+    cmp ecx, 32
+    jle .pp32_write
+    mov ecx, 32
+.pp32_write:
+    mov eax, 4
+    mov ebx, 1
+    mov edx, ecx
+    mov ecx, pad_spaces
+    int 80h
+ 
+.pp32_done:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+    ret
+ 
+ascii_to_int:
+    xor eax, eax
+.a2i_loop:
+    movzx ebx, byte [edi]
+    cmp bl, '0'
+    jl  .a2i_done
+    cmp bl, '9'
+    jg  .a2i_done
+    sub bl, '0'
+    imul eax, eax, 10
+    add eax, ebx
+    inc edi
+    jmp .a2i_loop
+.a2i_done:
+    ret
+ 
+print_uint32:
+    mov edi, num_buffer + 11   ; work right-to-left in buffer
+    xor ecx, ecx               ; digit counter
+ 
+    cmp eax, 0
+    jne .pu32_cvt
+ 
+    ; Special case: value is 0
+    dec edi
+    mov byte [edi], '0'
+    inc ecx
+    jmp .pu32_print
+ 
+.pu32_cvt:
+    mov ebx, 10
+.pu32_loop:
+    cmp eax, 0
+    je  .pu32_print
+    xor edx, edx
+    div ebx                 ; EAX = quotient, EDX = remainder
+    add dl, '0'
+    dec edi
+    mov [edi], dl
+    inc ecx
+    jmp .pu32_loop
+ 
+.pu32_print:
+    ; EDI = first digit, ECX = digit count
+    mov edx, ecx
+    mov ecx, edi
+    mov eax, 4
+    mov ebx, 1
+    int 80h
+    ret
 
 ;---Generate Report
 generate_report:
@@ -642,6 +1033,7 @@ generate_report:
     ; Calculate value = quantity * price
     imul eax, ebx
     add edi, eax  ; total_value += value
+    pop esi
 
     ; Check for low stock
     cmp ebx, LOW_STOCK_THRESHOLD
@@ -702,12 +1094,12 @@ generate_report:
     mov eax, edi
     call itoa
 
+    mov ecx, edi
     ; Print the number
     mov edx, num_buffer + 16
-    sub edx, edi  ; length
+    sub edx, ecx  ; length
     mov eax, 4
     mov ebx, 1
-    mov ecx, edi
     int 80h
 
 .no_items:
