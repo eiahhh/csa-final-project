@@ -37,12 +37,25 @@ section .data
     error   db 0Ah, "[ERROR] Validation Failed: ID already exists!", 0Ah
     error_len     equ $ - error
 
+;---Update Item
+    update_id_prompt db 0Ah, "Enter Item ID to Update: "
+    update_id_len    equ $ - update_id_prompt
+    update_qty_prompt db "Enter new Quantity: "
+    update_qty_len   equ $ - update_qty_prompt
+    update_price_prompt db "Enter new Price: "
+    update_price_len equ $ - update_price_prompt
+    update_success   db 0Ah, "[SUCCESS] Item updated!", 0Ah
+    update_success_len equ $ - update_success
+    not_found        db 0Ah, "[ERROR] Item not found!", 0Ah
+    not_found_len    equ $ - not_found
+
 ;---State Variable
     item_count dd 0 ; START AT 0 (The inventory is now empty by default)
     
 section .bss
     choice resb 2
     temp_id resb 8
+    search_id resb 8
     
 ;---The Empty "Array of Structures"
     inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
@@ -84,6 +97,8 @@ main_menu:
     mov al, [choice]
     cmp al, '1'
     je add_item
+    cmp al, '2'
+    je update_item
     cmp al, '7'
     je exit
 
@@ -173,7 +188,7 @@ add_item:
     mov eax, 3
     mov ebx, 0
     mov ecx, edi                ; Copy base folder address
-    add ecx, 40                 ; Jump 40 bytes down for Qty
+    add ecx, 48                 ; Jump 48 bytes down for Price
     mov edx, 8
     int 80h
 
@@ -196,6 +211,85 @@ add_item:
     mov ecx, error
     mov edx, error_len
     int 80h
+    jmp main_menu
+
+;---Prompt for Update Item
+update_item:
+
+;---Prompt for Item ID to Update
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, update_id_prompt
+    mov edx, update_id_len
+    int 80h
+
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, search_id
+    mov edx, 8
+    int 80h
+
+;---Search for the Item by ID
+    mov ecx, [item_count]
+    cmp ecx, 0                  ; If count is 0, no items to update
+    je .update_not_found
+
+    mov esi, inventory          ; Put start of inventory into ESI
+    mov eax, [search_id]        ; Load the search ID for comparison
+
+.update_check_loop:
+    mov ebx, [esi]              ; Load current record's ID
+    cmp eax, ebx                ; Compare with search ID
+    je .update_found             ; If match, jump to update
+
+    add esi, 56                 ; Move to next record
+    dec ecx                     ; Decrement counter
+    jnz .update_check_loop
+
+.update_not_found:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, not_found
+    mov edx, not_found_len
+    int 80h
+    jmp main_menu
+
+.update_found:
+;---Prompt for new Quantity
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, update_qty_prompt
+    mov edx, update_qty_len
+    int 80h
+
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, esi                ; Copy base address of found record
+    add ecx, 40                 ; Jump 40 bytes down for Qty
+    mov edx, 8
+    int 80h
+
+;---Prompt for new Price
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, update_price_prompt
+    mov edx, update_price_len
+    int 80h
+
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, esi                ; Copy base address of found record
+    add ecx, 48                 ; Jump 48 bytes down for Price
+    mov edx, 8
+    int 80h
+
+;---Confirm Update
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, update_success
+    mov edx, update_success_len
+    int 80h
+
     jmp main_menu
 
 ;---Prompt for exit program
