@@ -49,6 +49,12 @@ section .data
     not_found        db 0Ah, "[ERROR] Item not found!", 0Ah
     not_found_len    equ $ - not_found
 
+;---Delete Item
+    delete_id_prompt db 0Ah, "Enter Item ID to Delete: "
+    delete_id_len    equ $ - delete_id_prompt
+    delete_success   db 0Ah, "[SUCCESS] Item deleted!", 0Ah
+    delete_success_len equ $ - delete_success
+
 ;---State Variable
     item_count dd 0 ; START AT 0 (The inventory is now empty by default)
     
@@ -56,6 +62,7 @@ section .bss
     choice resb 2
     temp_id resb 8
     search_id resb 8
+    delete_id resb 8
     
 ;---The Empty "Array of Structures"
     inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
@@ -99,6 +106,8 @@ main_menu:
     je add_item
     cmp al, '2'
     je update_item
+    cmp al, '3'
+    je delete_item
     cmp al, '7'
     je exit
 
@@ -288,6 +297,85 @@ update_item:
     mov ebx, 1
     mov ecx, update_success
     mov edx, update_success_len
+    int 80h
+
+    jmp main_menu
+
+;---Prompt for Delete Item
+delete_item:
+
+;---Prompt for Item ID to Delete
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, delete_id_prompt
+    mov edx, delete_id_len
+    int 80h
+
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, delete_id
+    mov edx, 8
+    int 80h
+
+;---Search for the Item by ID
+    mov ecx, [item_count]
+    cmp ecx, 0                  ; If count is 0, no items to delete
+    je .delete_not_found
+
+    mov esi, inventory
+    mov eax, [delete_id]
+
+.delete_check_loop:
+    mov ebx, [esi]
+    cmp eax, ebx
+    je .delete_found
+
+    add esi, 56
+    dec ecx
+    jnz .delete_check_loop
+
+.delete_not_found:
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, not_found
+    mov edx, not_found_len
+    int 80h
+    jmp main_menu
+
+.delete_found:
+;---Shift records forward to fill the gap
+    mov edi, esi                ; EDI = record to delete
+    add esi, 56                 ; ESI = next record
+    dec ecx                     ; Remaining items after found one
+    cmp ecx, 0
+    je .delete_shift_done
+
+.delete_shift_loop:
+    push ecx                    ; Save outer counter
+    mov ecx, 56                 ; 56 bytes per record
+
+.copy_byte:
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ecx
+    jnz .copy_byte
+
+    pop ecx
+    dec ecx
+    jnz .delete_shift_loop
+
+.delete_shift_done:
+;---Decrement & Confirm
+    mov eax, [item_count]
+    dec eax
+    mov [item_count], eax
+
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, delete_success
+    mov edx, delete_success_len
     int 80h
 
     jmp main_menu
