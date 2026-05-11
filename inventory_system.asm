@@ -131,7 +131,7 @@
         delete_id resb 8
         
     ;---The Empty "Array of Structures"
-        inventory resb 560  ; We reserve exactly 560 bytes of blank space (10 items * 56 bytes each)
+        inventory resb 1120  ; We reserve exactly 1120 bytes of blank space (20 items * 56 bytes each)
 
         num_buffer  resb 16 ; for report calculations
         num_buf     resb 12 ; for print_uint32
