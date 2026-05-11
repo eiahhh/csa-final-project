@@ -117,7 +117,7 @@
         exit_msg_len equ $ - exit_msg
         save_err_msg db 0Ah, "[ERROR] Could not save data!", 0Ah
         save_err_msg_len equ $ - save_err_msg
-        filename db "inventory.dat", 0
+        filename db "/myfiles/inventory.csv", 0
         separator db ","
         separator_len equ 1
 
