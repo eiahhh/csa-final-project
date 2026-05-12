@@ -38,6 +38,8 @@
         success_len      equ $ - success
         error   db 0Ah, "[ERROR] Validation Failed: ID already exists!", 0Ah
         error_len     equ $ - error
+        full_msg db 0Ah, "[ERROR] Inventory full! Max 20 items reached.", 0Ah
+        full_msg_len equ $ - full_msg
 
     ;---Update Item
         update_id_prompt db 0Ah, "Enter Item ID to Update: "
@@ -109,8 +111,16 @@
         newline db 0Ah
         newline_len equ 1
         
+        LOW_STOCK_THRESHOLD equ 5
+        MAX_ITEMS equ 20
 
-    LOW_STOCK_THRESHOLD equ 5
+    ;---Input Error Handling
+        numeric_err_msg db 0Ah, "[ERROR] Invalid input! Please enter numbers only.", 0Ah
+        numeric_err_msg_len equ $ - numeric_err_msg
+        overflow_msg db 0Ah, "[ERROR] Input too long!", 0Ah
+        overflow_msg_len equ $ - overflow_msg
+        empty_input_msg db 0Ah, "[ERROR] Input cannot be empty!", 0Ah
+        empty_input_msg_len equ $ - empty_input_msg
 
     ;---Exit
         exit_msg db 0Ah, "========================================", 0Ah
@@ -141,6 +151,7 @@
         num_buf     resb 12 ; for print_uint32
 
         file_fd resd 1
+        temp_buf resb 2             ; for input overflow/flush detection
 
     section .text
         global _start
@@ -282,6 +293,19 @@
     ;---Prompt for Add item
     add_item:
 
+    ;---Check max capacity (20 items)
+        mov eax, [item_count]
+        cmp eax, MAX_ITEMS
+        jl .not_full
+
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, full_msg
+        mov edx, full_msg_len
+        int 80h
+        jmp main_menu
+
+    .not_full:
         mov eax, 4
         mov ebx, 1
         mov ecx, id
@@ -293,20 +317,45 @@
         mov ecx, temp_id
         mov edx, 8
         int 80h
-        
+
+    ;---Check for ID input overflow (if last byte is not newline, input was too long)
+        mov ecx, eax                ; ECX = bytes actually read
+        cmp ecx, 0
+        je .add_overflow_err
+
+    ;---CHANGE: Reject empty ID input
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .id_not_empty
+        cmp byte [temp_id], 0Ah     ; confirm it's a newline
+        je .add_empty_err           ; reject empty input
+    .id_not_empty:
+
+        dec ecx                     ; index of last byte read
+        cmp byte [temp_id + ecx], 0Ah
+        je .id_input_ok
+        call flush_stdin
+        jmp .add_overflow_err
+
+    .id_input_ok:
     ;---Validate the Uniqueness of the ID
         mov ecx, [item_count]       
         cmp ecx, 0  ;---; If count is 0, the very first item is always unique                  
         je .unique
         
         mov esi, inventory  ; Put start of inventory into ESI
-        mov eax, [temp_id]
         
     .check_loop:
+    ;---Compare full 8 bytes of ID (not just 4)
+        mov eax, [temp_id]
         mov ebx, [esi]              
         cmp eax, ebx                
-        je .duplicate_found          
+        jne .check_next
+        mov eax, [temp_id+4]
+        mov ebx, [esi+4]
+        cmp eax, ebx
+        je .duplicate_found
 
+    .check_next:
         add esi, 56                 
         dec ecx                     
         jnz .check_loop
@@ -334,13 +383,33 @@
         mov edx, name_len
         int 80h
         
+        push edi                    ; save record pointer
         mov eax, 3
         mov ebx, 0
         mov ecx, edi    ; Copy base folder address
         add ecx, 8  ; Jump 8 bytes down for Name
         mov edx, 32
         int 80h
-        
+        pop edi                     ; restore record pointer
+
+    ;---Reject empty Name input
+        mov ecx, eax                ; ECX = bytes read
+        cmp ecx, 0
+        je .name_ok
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .name_not_empty
+        cmp byte [edi + 8], 0Ah     ; check if first byte of name is newline
+        je .add_empty_err           ; reject empty input
+    .name_not_empty:
+
+    ;---Flush excess name input if buffer was filled without newline
+        dec ecx
+        add ecx, 8                  ; offset into record for name field
+        cmp byte [edi + ecx], 0Ah
+        je .name_ok
+        call flush_stdin
+    .name_ok:
+
     ;---Prompt for Quantity
         mov eax, 4
         mov ebx, 1
@@ -348,12 +417,40 @@
         mov edx, quantity_len
         int 80h
         
+        push edi                    ; save record pointer
         mov eax, 3
         mov ebx, 0
         mov ecx, edi                ; Copy base folder address
         add ecx, 40                 ; Jump 40 bytes down for Qty
         mov edx, 8
         int 80h
+        pop edi                     ; restore record pointer
+
+    ;---Check for Quantity overflow
+        mov ecx, eax                ; ECX = bytes read
+        cmp ecx, 0
+        je .add_qty_overflow
+
+    ;---Reject empty Quantity input
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .qty_not_empty
+        cmp byte [edi + 40], 0Ah    ; check if first byte of qty is newline
+        je .add_empty_err           ; reject empty input
+    .qty_not_empty:
+
+        dec ecx
+        add ecx, 40
+        cmp byte [edi + ecx], 0Ah
+        je .qty_no_overflow
+        call flush_stdin
+        jmp .add_qty_overflow
+    .qty_no_overflow:
+
+    ;---Validate Quantity is numeric
+        lea esi, [edi + 40]
+        call validate_numeric
+        cmp eax, 0
+        je .add_numeric_err
 
     ;---Prompt for Price
         mov eax, 4
@@ -362,12 +459,40 @@
         mov edx, price_len
         int 80h
         
+        push edi                    ; save record pointer
         mov eax, 3
         mov ebx, 0
         mov ecx, edi                ; Copy base folder address
         add ecx, 48                 ; Jump 48 bytes down for Price
         mov edx, 8
         int 80h
+        pop edi                     ; restore record pointer
+
+    ;---Check for Price overflow
+        mov ecx, eax                ; ECX = bytes read
+        cmp ecx, 0
+        je .add_price_overflow
+
+    ;---Reject empty Price input
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .price_not_empty
+        cmp byte [edi + 48], 0Ah    ; check if first byte of price is newline
+        je .add_empty_err           ; reject empty input
+    .price_not_empty:
+
+        dec ecx
+        add ecx, 48
+        cmp byte [edi + ecx], 0Ah
+        je .price_no_overflow
+        call flush_stdin
+        jmp .add_price_overflow
+    .price_no_overflow:
+
+    ;---Validate Price is numeric
+        lea esi, [edi + 48]
+        call validate_numeric
+        cmp eax, 0
+        je .add_numeric_err
 
     ;---Increment & Confirm
         mov eax, [item_count]
@@ -390,6 +515,33 @@
         int 80h
         jmp main_menu
 
+    .add_overflow_err:
+    .add_qty_overflow:
+    .add_price_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
+        int 80h
+        jmp main_menu
+
+    .add_numeric_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, numeric_err_msg
+        mov edx, numeric_err_msg_len
+        int 80h
+        jmp main_menu
+
+    ;---New handler for empty input errors during Add Item
+    .add_empty_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, empty_input_msg
+        mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
     ;---Prompt for Update Item
     update_item:
 
@@ -406,19 +558,32 @@
         mov edx, 8
         int 80h
 
+    ;---Reject empty Update ID input
+        cmp eax, 1                  ; only 1 byte read = just newline
+        jne .update_id_not_empty
+        cmp byte [search_id], 0Ah   ; confirm it's a newline
+        je .update_empty_err        ; reject empty input
+    .update_id_not_empty:
+
     ;---Search for the Item by ID
         mov ecx, [item_count]
         cmp ecx, 0                  ; If count is 0, no items to update
         je .update_not_found
 
         mov esi, inventory          ; Put start of inventory into ESI
-        mov eax, [search_id]        ; Load the search ID for comparison
 
     .update_check_loop:
-        mov ebx, [esi]              ; Load current record's ID
+    ;---Compare full 8 bytes of ID
+        mov eax, [search_id]
+        mov ebx, [esi]              ; Load current record's ID (first 4 bytes)
         cmp eax, ebx                ; Compare with search ID
-        je .update_found             ; If match, jump to update
+        jne .update_check_next
+        mov eax, [search_id+4]
+        mov ebx, [esi+4]            ; Load next 4 bytes
+        cmp eax, ebx
+        je .update_found             ; If both halves match, found it
 
+    .update_check_next:
         add esi, 56                 ; Move to next record
         dec ecx                     ; Decrement counter
         jnz .update_check_loop
@@ -439,12 +604,44 @@
         mov edx, update_qty_len
         int 80h
 
+        push esi                    ; save record pointer
         mov eax, 3
         mov ebx, 0
         mov ecx, esi                ; Copy base address of found record
         add ecx, 40                 ; Jump 40 bytes down for Qty
         mov edx, 8
         int 80h
+        pop esi                     ; restore record pointer
+
+    ;---Check for Quantity overflow
+        mov ecx, eax
+        cmp ecx, 0
+        je .update_overflow
+
+    ;---Reject empty Update Quantity input
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .upd_qty_not_empty
+        cmp byte [esi + 40], 0Ah    ; check if first byte is newline
+        je .update_empty_err        ; reject empty input
+    .upd_qty_not_empty:
+
+        dec ecx
+        add ecx, 40
+        cmp byte [esi + ecx], 0Ah
+        je .upd_qty_no_overflow
+        call flush_stdin
+        jmp .update_overflow
+    .upd_qty_no_overflow:
+
+    ;---Validate Quantity is numeric
+        lea esi, [esi + 40]
+        sub esi, 40                 ; keep base in ESI for later
+        push esi
+        add esi, 40
+        call validate_numeric
+        pop esi
+        cmp eax, 0
+        je .update_numeric_err
 
     ;---Prompt for new Price
         mov eax, 4
@@ -453,12 +650,42 @@
         mov edx, update_price_len
         int 80h
 
+        push esi                    ; save record pointer
         mov eax, 3
         mov ebx, 0
         mov ecx, esi                ; Copy base address of found record
         add ecx, 48                 ; Jump 48 bytes down for Price
         mov edx, 8
         int 80h
+        pop esi                     ; restore record pointer
+
+    ;---Check for Price overflow
+        mov ecx, eax
+        cmp ecx, 0
+        je .update_overflow
+
+    ;---Reject empty Update Price input
+        cmp ecx, 1                  ; only 1 byte read = just newline
+        jne .upd_price_not_empty
+        cmp byte [esi + 48], 0Ah    ; check if first byte is newline
+        je .update_empty_err        ; reject empty input
+    .upd_price_not_empty:
+
+        dec ecx
+        add ecx, 48
+        cmp byte [esi + ecx], 0Ah
+        je .upd_price_no_overflow
+        call flush_stdin
+        jmp .update_overflow
+    .upd_price_no_overflow:
+
+    ;---Validate Price is numeric
+        push esi
+        add esi, 48
+        call validate_numeric
+        pop esi
+        cmp eax, 0
+        je .update_numeric_err
 
     ;---Confirm Update
         mov eax, 4
@@ -467,6 +694,31 @@
         mov edx, update_success_len
         int 80h
 
+        jmp main_menu
+
+    .update_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
+        int 80h
+        jmp main_menu
+
+    .update_numeric_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, numeric_err_msg
+        mov edx, numeric_err_msg_len
+        int 80h
+        jmp main_menu
+
+    ;---New handler for empty input errors during Update Item
+    .update_empty_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, empty_input_msg
+        mov edx, empty_input_msg_len
+        int 80h
         jmp main_menu
 
     ;---Prompt for Delete Item
@@ -485,19 +737,32 @@
         mov edx, 8
         int 80h
 
+    ;---Reject empty Delete ID input
+        cmp eax, 1                  ; only 1 byte read = just newline
+        jne .delete_id_not_empty
+        cmp byte [delete_id], 0Ah   ; confirm it's a newline
+        je .delete_empty_err        ; reject empty input
+    .delete_id_not_empty:
+
     ;---Search for the Item by ID
         mov ecx, [item_count]
         cmp ecx, 0                  ; If count is 0, no items to delete
         je .delete_not_found
 
         mov esi, inventory
-        mov eax, [delete_id]
 
     .delete_check_loop:
+    ;---Compare full 8 bytes of ID
+        mov eax, [delete_id]
         mov ebx, [esi]
+        cmp eax, ebx
+        jne .delete_check_next
+        mov eax, [delete_id+4]
+        mov ebx, [esi+4]
         cmp eax, ebx
         je .delete_found
 
+    .delete_check_next:
         add esi, 56
         dec ecx
         jnz .delete_check_loop
@@ -507,6 +772,15 @@
         mov ebx, 1
         mov ecx, not_found
         mov edx, not_found_len
+        int 80h
+        jmp main_menu
+
+    ;---New handler for empty input errors during Delete Item
+    .delete_empty_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, empty_input_msg
+        mov edx, empty_input_msg_len
         int 80h
         jmp main_menu
 
@@ -563,18 +837,31 @@
         mov edx, 8
         int 80h
 
+    ;---Reject empty Search ID input
+        cmp eax, 1                  ; only 1 byte read = just newline
+        jne .search_id_not_empty
+        cmp byte [search_id], 0Ah   ; confirm it's a newline
+        je .search_empty_err        ; reject empty input
+    .search_id_not_empty:
+
         mov ecx, [item_count]
         cmp ecx, 0
         je .search_not_found
 
         mov esi, inventory
-        mov eax, [search_id]
 
     .search_check_loop:
+    ;---Compare full 8 bytes of ID
+        mov eax, [search_id]
         mov ebx, [esi]
+        cmp eax, ebx
+        jne .search_check_next
+        mov eax, [search_id+4]
+        mov ebx, [esi+4]
         cmp eax, ebx
         je .search_found
 
+    .search_check_next:
         add esi, 56
         dec ecx
         jnz .search_check_loop
@@ -584,6 +871,15 @@
         mov ebx, 1
         mov ecx, not_found
         mov edx, not_found_len
+        int 80h
+        jmp main_menu
+
+    ;---New handler for empty input errors during Search Item
+    .search_empty_err:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, empty_input_msg
+        mov edx, empty_input_msg_len
         int 80h
         jmp main_menu
 
@@ -1027,6 +1323,57 @@
         mov eax, 4
         mov ebx, 1
         int 80h
+        ret
+
+    ; flush_stdin: Drain remaining bytes from stdin until newline
+    ;   Reads 1 byte at a time into temp_buf until 0Ah is found.
+    ;   Preserves all registers except EAX, EBX, ECX, EDX.
+    flush_stdin:
+    .flush_loop:
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, temp_buf
+        mov edx, 1
+        int 80h
+        cmp byte [temp_buf], 0Ah
+        jne .flush_loop
+        ret
+
+    ; validate_numeric: Check if string at ESI is all digits
+    ;   Input:  ESI = pointer to string (terminated by 0Ah or 0)
+    ;   Output: EAX = 1 if valid (all digits), 0 if invalid
+    ;   Preserves ESI.
+    validate_numeric:
+        push esi
+        push ebx
+
+    ;---Reject empty numeric input
+        movzx ebx, byte [esi]
+        cmp bl, 0Ah                 ; if first char is newline, string is empty
+        je .vn_invalid
+        cmp bl, 0                   ; if first char is null, string is empty
+        je .vn_invalid
+
+    .vn_loop:
+        movzx ebx, byte [esi]
+        cmp bl, 0Ah
+        je .vn_valid
+        cmp bl, 0
+        je .vn_valid
+        cmp bl, '0'
+        jb .vn_invalid
+        cmp bl, '9'
+        ja .vn_invalid
+        inc esi
+        jmp .vn_loop
+    .vn_valid:
+        mov eax, 1
+        jmp .vn_done
+    .vn_invalid:
+        mov eax, 0
+    .vn_done:
+        pop ebx
+        pop esi
         ret
 
     ;---Generate Report
