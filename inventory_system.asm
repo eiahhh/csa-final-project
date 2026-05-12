@@ -118,6 +118,8 @@
         save_err_msg db 0Ah, "[ERROR] Could not save data!", 0Ah
         save_err_msg_len equ $ - save_err_msg
         filename db "/myfiles/inventory.csv", 0
+        csv_header db "ID,Name,Quantity,Price", 0Ah
+        csv_header_len equ $ - csv_header
         separator db ","
         separator_len equ 1
 
@@ -1284,6 +1286,13 @@
         jl .save_error           ; if negative, file open failed
 
         mov [file_fd], eax       ; store file descriptor
+
+        ; --- Write CSV column headers ---
+        mov eax, 4
+        mov ebx, [file_fd]
+        mov ecx, csv_header
+        mov edx, csv_header_len
+        int 80h
 
         ; --- Loop through inventory and write each record ---
         mov ecx, [item_count]
