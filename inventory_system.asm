@@ -1020,7 +1020,7 @@
         mov eax, 0
         call itoa
         mov ecx, edi
-        mov edx, num_buffer + 16
+        mov edx, num_buffer + 15    ; exclude null terminator
         sub edx, ecx
         mov eax, 4
         mov ebx, 1
@@ -1119,7 +1119,7 @@
         mov eax, edi
         call itoa
         mov ecx, edi
-        mov edx, num_buffer + 16
+        mov edx, num_buffer + 15    ; exclude null terminator
         sub edx, ecx
         mov eax, 4
         mov ebx, 1
