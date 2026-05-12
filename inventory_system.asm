@@ -20,6 +20,8 @@
         footer db "========================================", 0Ah
             db "Enter your choice (1-7): "
         footer_len equ $ - footer
+        menu_invalid_msg db 0Ah, "[ERROR] Invalid choice! Please enter 1-7.", 0Ah
+        menu_invalid_msg_len equ $ - menu_invalid_msg
 
     ;---Add Item
         id    db 0Ah, "Enter ID (e.g., 1001): "
@@ -230,7 +232,28 @@
         mov ecx, choice
         mov edx, 2
         int 80h
+
+    ;---Validate Choice Length
+        cmp eax, 2
+        jne .invalid_choice
+
+        cmp byte [choice+1], 0Ah
+        je .valid_input
+
+    ;---Flush Excess Input
+    .flush_input:
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, choice+1
+        mov edx, 1
+        int 80h
         
+        cmp byte [choice+1], 0Ah
+        jne .flush_input
+        jmp .invalid_choice
+
+    ;---Process Valid Choice
+    .valid_input:
         mov al, [choice]
         cmp al, '1'
         je add_item
@@ -246,6 +269,15 @@
         je generate_report
         cmp al, '7'
         je exit
+        
+    ;---Handle Invalid Choice
+    .invalid_choice:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, menu_invalid_msg
+        mov edx, menu_invalid_msg_len
+        int 80h
+        jmp main_menu
 
     ;---Prompt for Add item
     add_item:
