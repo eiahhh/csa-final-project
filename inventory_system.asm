@@ -38,6 +38,8 @@
         success_len      equ $ - success
         error   db 0Ah, "[ERROR] Validation Failed: ID already exists!", 0Ah
         error_len     equ $ - error
+        id_not_numeric_msg db 0Ah, "[ERROR] ID must contain only numbers!", 0Ah
+        id_not_numeric_len equ $ - id_not_numeric_msg
         full_msg db 0Ah, "[ERROR] Inventory full! Max 20 items reached.", 0Ah
         full_msg_len equ $ - full_msg
 
@@ -117,8 +119,10 @@
     ;---Input Error Handling
         numeric_err_msg db 0Ah, "[ERROR] Invalid input! Please enter numbers only.", 0Ah
         numeric_err_msg_len equ $ - numeric_err_msg
-        overflow_msg db 0Ah, "[ERROR] Input too long!", 0Ah
+        overflow_msg db 0Ah, "[ERROR] Input too long! Max of 7 characters only.", 0Ah
         overflow_msg_len equ $ - overflow_msg
+        name_overflow_msg db 0Ah, "[ERROR] Input too long! Max of 31 characters only.", 0Ah
+        name_overflow_msg_len equ $ - name_overflow_msg
         empty_input_msg db 0Ah, "[ERROR] Input cannot be empty!", 0Ah
         empty_input_msg_len equ $ - empty_input_msg
 
@@ -136,7 +140,7 @@
         separator_len equ 1
 
     ;---State Variable
-        item_count dd 0 ; START AT 0 (The inventory is now empty by default)
+        item_count dd 0 ; START AT 0 (The inventory is empty by default)
         
     section .bss
         choice resb 2
@@ -312,6 +316,10 @@
         mov edx, id_len
         int 80h
 
+    ;---Clear temp_id buffer before read
+        mov dword [temp_id], 0
+        mov dword [temp_id+4], 0
+
         mov eax, 3
         mov ebx, 0
         mov ecx, temp_id
@@ -337,6 +345,12 @@
         jmp .add_overflow_err
 
     .id_input_ok:
+    ;---Validate ID is numeric (only digits allowed)
+        mov esi, temp_id
+        call validate_numeric
+        cmp eax, 0
+        je .add_id_not_numeric       ; reject non-numeric ID
+
     ;---Validate the Uniqueness of the ID
         mov ecx, [item_count]       
         cmp ecx, 0  ;---; If count is 0, the very first item is always unique                  
@@ -402,12 +416,13 @@
         je .add_empty_err           ; reject empty input
     .name_not_empty:
 
-    ;---Flush excess name input if buffer was filled without newline
+    ;---Reject name if buffer was filled without newline (input too long)
         dec ecx
         add ecx, 8                  ; offset into record for name field
         cmp byte [edi + ecx], 0Ah
         je .name_ok
         call flush_stdin
+        jmp .add_name_overflow       ; reject long name input
     .name_ok:
 
     ;---Prompt for Quantity
@@ -525,6 +540,14 @@
         int 80h
         jmp main_menu
 
+    .add_name_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, name_overflow_msg
+        mov edx, name_overflow_msg_len
+        int 80h
+        jmp main_menu
+
     .add_numeric_err:
         mov eax, 4
         mov ebx, 1
@@ -542,6 +565,15 @@
         int 80h
         jmp main_menu
 
+    ;---Handler for non-numeric ID during Add Item
+    .add_id_not_numeric:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, id_not_numeric_msg
+        mov edx, id_not_numeric_len
+        int 80h
+        jmp main_menu
+
     ;---Prompt for Update Item
     update_item:
 
@@ -551,6 +583,10 @@
         mov ecx, update_id_prompt
         mov edx, update_id_len
         int 80h
+
+    ;---Clear search_id buffer before read
+        mov dword [search_id], 0
+        mov dword [search_id+4], 0
 
         mov eax, 3
         mov ebx, 0
@@ -564,6 +600,12 @@
         cmp byte [search_id], 0Ah   ; confirm it's a newline
         je .update_empty_err        ; reject empty input
     .update_id_not_empty:
+
+    ;---Validate Update ID is numeric
+        mov esi, search_id
+        call validate_numeric
+        cmp eax, 0
+        je .update_id_not_numeric    ; reject non-numeric ID
 
     ;---Search for the Item by ID
         mov ecx, [item_count]
@@ -721,6 +763,15 @@
         int 80h
         jmp main_menu
 
+    ;---Handler for non-numeric ID during Update Item
+    .update_id_not_numeric:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, id_not_numeric_msg
+        mov edx, id_not_numeric_len
+        int 80h
+        jmp main_menu
+
     ;---Prompt for Delete Item
     delete_item:
 
@@ -730,6 +781,10 @@
         mov ecx, delete_id_prompt
         mov edx, delete_id_len
         int 80h
+
+    ;---Clear delete_id buffer before read
+        mov dword [delete_id], 0
+        mov dword [delete_id+4], 0
 
         mov eax, 3
         mov ebx, 0
@@ -743,6 +798,12 @@
         cmp byte [delete_id], 0Ah   ; confirm it's a newline
         je .delete_empty_err        ; reject empty input
     .delete_id_not_empty:
+
+    ;---Validate Delete ID is numeric
+        mov esi, delete_id
+        call validate_numeric
+        cmp eax, 0
+        je .delete_id_not_numeric    ; reject non-numeric ID
 
     ;---Search for the Item by ID
         mov ecx, [item_count]
@@ -781,6 +842,15 @@
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    ;---Handler for non-numeric ID during Delete Item
+    .delete_id_not_numeric:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, id_not_numeric_msg
+        mov edx, id_not_numeric_len
         int 80h
         jmp main_menu
 
@@ -831,6 +901,10 @@
         mov edx, search_id_len
         int 80h
 
+    ;---Clear search_id buffer before read
+        mov dword [search_id], 0
+        mov dword [search_id+4], 0
+
         mov eax, 3
         mov ebx, 0
         mov ecx, search_id
@@ -843,6 +917,12 @@
         cmp byte [search_id], 0Ah   ; confirm it's a newline
         je .search_empty_err        ; reject empty input
     .search_id_not_empty:
+
+    ;---Validate Search ID is numeric
+        mov esi, search_id
+        call validate_numeric
+        cmp eax, 0
+        je .search_id_not_numeric    ; reject non-numeric ID
 
         mov ecx, [item_count]
         cmp ecx, 0
@@ -880,6 +960,15 @@
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    ;---Handler for non-numeric ID during Search Item
+    .search_id_not_numeric:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, id_not_numeric_msg
+        mov edx, id_not_numeric_len
         int 80h
         jmp main_menu
 
