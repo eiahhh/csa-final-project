@@ -696,21 +696,6 @@
         cmp eax, 0
         je .update_numeric_err
 
-    ;---Copy valid Quantity to record
-        push esi                    ; preserve record base pointer
-        mov edi, esi
-        add edi, 40                 ; EDI points to record quantity field
-        mov esi, temp_qty           ; ESI points to temp_qty
-        mov ecx, 8
-    .copy_upd_qty:
-        mov al, [esi]
-        mov [edi], al
-        inc esi
-        inc edi
-        dec ecx
-        jnz .copy_upd_qty
-        pop esi                     ; restore record base pointer
-
     ;---Prompt for new Price
         mov eax, 4
         mov ebx, 1
@@ -754,6 +739,21 @@
         pop esi
         cmp eax, 0
         je .update_numeric_err
+
+    ;---Copy valid Quantity to record
+        push esi                    ; preserve record base pointer
+        mov edi, esi
+        add edi, 40                 ; EDI points to record quantity field
+        mov esi, temp_qty           ; ESI points to temp_qty
+        mov ecx, 8
+    .copy_upd_qty:
+        mov al, [esi]
+        mov [edi], al
+        inc esi
+        inc edi
+        dec ecx
+        jnz .copy_upd_qty
+        pop esi                     ; restore record base pointer
 
     ;---Copy valid Price to record
         push esi                    ; preserve record base pointer
