@@ -614,13 +614,22 @@
         je .update_empty_err        ; reject empty input
     .update_id_not_empty:
 
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_id + ecx], 0Ah
+        je .update_id_no_overflow
+        call flush_stdin
+        jmp .update_overflow
+    .update_id_no_overflow:
+
     ;---Validate Update ID is numeric
         mov esi, search_id
         call validate_numeric
         cmp eax, 0
         je .update_id_not_numeric    ; reject non-numeric ID
 
-    ;---Search for the Item by ID
+    ;---Search for the Item by ID  
         mov ecx, [item_count]
         cmp ecx, 0                  ; If count is 0, no items to update
         je .update_not_found
@@ -838,6 +847,15 @@
         je .delete_empty_err        ; reject empty input
     .delete_id_not_empty:
 
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [delete_id + ecx], 0Ah
+        je .delete_id_no_overflow
+        call flush_stdin
+        jmp .delete_overflow
+    .delete_id_no_overflow:
+
     ;---Validate Delete ID is numeric
         mov esi, delete_id
         call validate_numeric
@@ -881,6 +899,14 @@
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    .delete_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
         int 80h
         jmp main_menu
 
@@ -1004,6 +1030,15 @@
         je .search_empty_err        ; reject empty input
     .search_id_not_empty:
 
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_id + ecx], 0Ah
+        je .search_id_no_overflow
+        call flush_stdin
+        jmp .search_overflow
+    .search_id_no_overflow:
+
     ;---Validate Search ID is numeric
         mov esi, search_id
         call validate_numeric
@@ -1105,12 +1140,20 @@
         int 80h
         jmp main_menu
 
-    ;---New handler for empty input errors during Search Item
+    ;---Handler for empty input errors during Search Item
     .search_empty_err:
         mov eax, 4
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    .search_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
         int 80h
         jmp main_menu
 
