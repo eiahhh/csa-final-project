@@ -1105,6 +1105,7 @@
         cmp byte [search_name + ecx], 0Ah
         je .search_name_input_ok
         call flush_stdin
+        jmp .search_name_overflow
     .search_name_input_ok:
 
         mov ecx, [item_count]
@@ -1154,6 +1155,14 @@
         mov ebx, 1
         mov ecx, overflow_msg
         mov edx, overflow_msg_len
+        int 80h
+        jmp main_menu
+
+    .search_name_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, name_overflow_msg
+        mov edx, name_overflow_msg_len
         int 80h
         jmp main_menu
 
