@@ -62,8 +62,17 @@
         delete_success_len equ $ - delete_success
 
     ;---Search Item
+        search_menu_prompt db 0Ah, "Search by:", 0Ah
+                           db "1. ID", 0Ah
+                           db "2. Name", 0Ah
+                           db "Enter choice (1-2): "
+        search_menu_prompt_len equ $ - search_menu_prompt
+        search_invalid_msg db 0Ah, "[ERROR] Invalid choice! Please enter 1 or 2.", 0Ah
+        search_invalid_msg_len equ $ - search_invalid_msg
         search_id_prompt db 0Ah, "Enter Item ID to Search: "
         search_id_len    equ $ - search_id_prompt
+        search_name_prompt db "Enter Item Name to Search: "
+        search_name_prompt_len equ $ - search_name_prompt
         
         disp_id          db 0Ah, "ID: "
         disp_id_len      equ $ - disp_id
@@ -147,6 +156,8 @@
         temp_id resb 8
         search_id resb 8
         delete_id resb 8
+        search_name resb 32
+        search_choice resb 2
         
     ;---The Empty "Array of Structures"
         inventory resb 1120  ; We reserve exactly 1120 bytes of blank space (20 items * 56 bytes each)
@@ -895,6 +906,53 @@
     ;---Search Item
     search_item:
 
+    ;---Display search sub-menu
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_menu_prompt
+        mov edx, search_menu_prompt_len
+        int 80h
+
+    ;---Read search choice
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_choice
+        mov edx, 2
+        int 80h
+
+    ;---Validate search choice length
+        cmp eax, 2
+        jne .search_invalid_choice
+        cmp byte [search_choice+1], 0Ah
+        jne .search_flush_choice
+
+    ;---Route based on choice
+        cmp byte [search_choice], '1'
+        je .search_by_id
+        cmp byte [search_choice], '2'
+        je .search_by_name
+        jmp .search_invalid_choice
+
+    ;---Flush excess choice input
+    .search_flush_choice:
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_choice+1
+        mov edx, 1
+        int 80h
+        cmp byte [search_choice+1], 0Ah
+        jne .search_flush_choice
+
+    .search_invalid_choice:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_invalid_msg
+        mov edx, search_invalid_msg_len
+        int 80h
+        jmp main_menu
+
+    ; SEARCH BY ID
+    .search_by_id:
         mov eax, 4
         mov ebx, 1
         mov ecx, search_id_prompt
@@ -930,22 +988,87 @@
 
         mov esi, inventory
 
-    .search_check_loop:
+    .search_id_loop:
     ;---Compare full 8 bytes of ID
         mov eax, [search_id]
         mov ebx, [esi]
         cmp eax, ebx
-        jne .search_check_next
+        jne .search_id_next
         mov eax, [search_id+4]
         mov ebx, [esi+4]
         cmp eax, ebx
         je .search_found
 
-    .search_check_next:
+    .search_id_next:
         add esi, 56
         dec ecx
-        jnz .search_check_loop
+        jnz .search_id_loop
+        jmp .search_not_found
 
+    ; SEARCH BY NAME
+    .search_by_name:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_name_prompt
+        mov edx, search_name_prompt_len
+        int 80h
+
+    ;---Clear search_name buffer before read (32 bytes)
+        mov dword [search_name], 0
+        mov dword [search_name+4], 0
+        mov dword [search_name+8], 0
+        mov dword [search_name+12], 0
+        mov dword [search_name+16], 0
+        mov dword [search_name+20], 0
+        mov dword [search_name+24], 0
+        mov dword [search_name+28], 0
+
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_name
+        mov edx, 32
+        int 80h
+
+    ;---Reject empty Name input
+        cmp eax, 1
+        jne .search_name_not_empty
+        cmp byte [search_name], 0Ah
+        je .search_empty_err
+    .search_name_not_empty:
+
+    ;---Flush excess name input if too long
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_name + ecx], 0Ah
+        je .search_name_input_ok
+        call flush_stdin
+    .search_name_input_ok:
+
+        mov ecx, [item_count]
+        cmp ecx, 0
+        je .search_not_found
+
+        mov esi, inventory
+
+    .search_name_loop:
+        push ecx
+    ;---Compare search_name against record name field (ESI+8)
+        push esi
+        add esi, 8                  ; point to name field in record
+        mov edi, search_name
+        call compare_name           ; EAX = 1 if match, 0 if no match
+        pop esi
+        pop ecx
+        cmp eax, 1
+        je .search_found
+
+    .search_name_next:
+        add esi, 56
+        dec ecx
+        jnz .search_name_loop
+        jmp .search_not_found
+
+    ; SEARCH RESULTS / ERROR HANDLERS
     .search_not_found:
         mov eax, 4
         mov ebx, 1
@@ -1462,6 +1585,54 @@
         mov eax, 0
     .vn_done:
         pop ebx
+        pop esi
+        ret
+
+    ; compare_name: Compare two name strings byte-by-byte
+    ;   Input:  ESI = pointer to record name field
+    ;           EDI = pointer to search name input
+    ;   Output: EAX = 1 if match, 0 if no match
+    ;   Preserves ESI, EDI.
+    compare_name:
+        push esi
+        push edi
+        push ebx
+        push ecx
+    .cn_loop:
+        movzx eax, byte [esi]       ; load byte from record name
+        movzx ebx, byte [edi]       ; load byte from search input
+    ;---Check if both strings ended at the same point
+        cmp al, 0Ah
+        je .cn_check_end_a
+        cmp al, 0
+        je .cn_check_end_a
+    ;---Record char is not a terminator; check if search char ended early
+        cmp bl, 0Ah
+        je .cn_no_match              ; search ended but record didn't
+        cmp bl, 0
+        je .cn_no_match
+    ;---Both have valid chars; compare them
+        cmp al, bl
+        jne .cn_no_match
+        inc esi
+        inc edi
+        jmp .cn_loop
+    .cn_check_end_a:
+    ;---Record name ended; check if search name also ended
+        cmp bl, 0Ah
+        je .cn_match
+        cmp bl, 0
+        je .cn_match
+        jmp .cn_no_match             ; search has more chars = no match
+    .cn_match:
+        mov eax, 1
+        jmp .cn_done
+    .cn_no_match:
+        mov eax, 0
+    .cn_done:
+        pop ecx
+        pop ebx
+        pop edi
         pop esi
         ret
 
