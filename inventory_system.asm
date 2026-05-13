@@ -154,6 +154,8 @@
     section .bss
         choice resb 2
         temp_id resb 8
+        temp_qty resb 8
+        temp_price resb 8
         search_id resb 8
         delete_id resb 8
         search_name resb 32
@@ -657,14 +659,15 @@
         mov edx, update_qty_len
         int 80h
 
-        push esi                    ; save record pointer
+    ;---Clear temp_qty buffer before read
+        mov dword [temp_qty], 0
+        mov dword [temp_qty+4], 0
+
         mov eax, 3
         mov ebx, 0
-        mov ecx, esi                ; Copy base address of found record
-        add ecx, 40                 ; Jump 40 bytes down for Qty
+        mov ecx, temp_qty
         mov edx, 8
         int 80h
-        pop esi                     ; restore record pointer
 
     ;---Check for Quantity overflow
         mov ecx, eax
@@ -674,27 +677,39 @@
     ;---Reject empty Update Quantity input
         cmp ecx, 1                  ; only 1 byte read = just newline
         jne .upd_qty_not_empty
-        cmp byte [esi + 40], 0Ah    ; check if first byte is newline
+        cmp byte [temp_qty], 0Ah    ; check if first byte is newline
         je .update_empty_err        ; reject empty input
     .upd_qty_not_empty:
 
         dec ecx
-        add ecx, 40
-        cmp byte [esi + ecx], 0Ah
+        cmp byte [temp_qty + ecx], 0Ah
         je .upd_qty_no_overflow
         call flush_stdin
         jmp .update_overflow
     .upd_qty_no_overflow:
 
     ;---Validate Quantity is numeric
-        lea esi, [esi + 40]
-        sub esi, 40                 ; keep base in ESI for later
-        push esi
-        add esi, 40
+        push esi                    ; preserve record base pointer
+        mov esi, temp_qty
         call validate_numeric
         pop esi
         cmp eax, 0
         je .update_numeric_err
+
+    ;---Copy valid Quantity to record
+        push esi                    ; preserve record base pointer
+        mov edi, esi
+        add edi, 40                 ; EDI points to record quantity field
+        mov esi, temp_qty           ; ESI points to temp_qty
+        mov ecx, 8
+    .copy_upd_qty:
+        mov al, [esi]
+        mov [edi], al
+        inc esi
+        inc edi
+        dec ecx
+        jnz .copy_upd_qty
+        pop esi                     ; restore record base pointer
 
     ;---Prompt for new Price
         mov eax, 4
@@ -703,14 +718,15 @@
         mov edx, update_price_len
         int 80h
 
-        push esi                    ; save record pointer
+    ;---Clear temp_price buffer before read
+        mov dword [temp_price], 0
+        mov dword [temp_price+4], 0
+
         mov eax, 3
         mov ebx, 0
-        mov ecx, esi                ; Copy base address of found record
-        add ecx, 48                 ; Jump 48 bytes down for Price
+        mov ecx, temp_price
         mov edx, 8
         int 80h
-        pop esi                     ; restore record pointer
 
     ;---Check for Price overflow
         mov ecx, eax
@@ -720,25 +736,39 @@
     ;---Reject empty Update Price input
         cmp ecx, 1                  ; only 1 byte read = just newline
         jne .upd_price_not_empty
-        cmp byte [esi + 48], 0Ah    ; check if first byte is newline
+        cmp byte [temp_price], 0Ah  ; check if first byte is newline
         je .update_empty_err        ; reject empty input
     .upd_price_not_empty:
 
         dec ecx
-        add ecx, 48
-        cmp byte [esi + ecx], 0Ah
+        cmp byte [temp_price + ecx], 0Ah
         je .upd_price_no_overflow
         call flush_stdin
         jmp .update_overflow
     .upd_price_no_overflow:
 
     ;---Validate Price is numeric
-        push esi
-        add esi, 48
+        push esi                    ; preserve record base pointer
+        mov esi, temp_price
         call validate_numeric
         pop esi
         cmp eax, 0
         je .update_numeric_err
+
+    ;---Copy valid Price to record
+        push esi                    ; preserve record base pointer
+        mov edi, esi
+        add edi, 48                 ; EDI points to record price field
+        mov esi, temp_price         ; ESI points to temp_price
+        mov ecx, 8
+    .copy_upd_price:
+        mov al, [esi]
+        mov [edi], al
+        inc esi
+        inc edi
+        dec ecx
+        jnz .copy_upd_price
+        pop esi                     ; restore record base pointer
 
     ;---Confirm Update
         mov eax, 4
@@ -783,9 +813,7 @@
         int 80h
         jmp main_menu
 
-    ;---Prompt for Delete Item
     delete_item:
-
     ;---Prompt for Item ID to Delete
         mov eax, 4
         mov ebx, 1
