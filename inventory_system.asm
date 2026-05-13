@@ -62,8 +62,17 @@
         delete_success_len equ $ - delete_success
 
     ;---Search Item
+        search_menu_prompt db 0Ah, "Search by:", 0Ah
+                           db "1. ID", 0Ah
+                           db "2. Name", 0Ah
+                           db "Enter choice (1-2): "
+        search_menu_prompt_len equ $ - search_menu_prompt
+        search_invalid_msg db 0Ah, "[ERROR] Invalid choice! Please enter 1 or 2.", 0Ah
+        search_invalid_msg_len equ $ - search_invalid_msg
         search_id_prompt db 0Ah, "Enter Item ID to Search: "
         search_id_len    equ $ - search_id_prompt
+        search_name_prompt db 0Ah, "Enter Item Name to Search: "
+        search_name_prompt_len equ $ - search_name_prompt
         
         disp_id          db 0Ah, "ID: "
         disp_id_len      equ $ - disp_id
@@ -145,8 +154,12 @@
     section .bss
         choice resb 2
         temp_id resb 8
+        temp_qty resb 8
+        temp_price resb 8
         search_id resb 8
         delete_id resb 8
+        search_name resb 32
+        search_choice resb 2
         
     ;---The Empty "Array of Structures"
         inventory resb 1120  ; We reserve exactly 1120 bytes of blank space (20 items * 56 bytes each)
@@ -601,13 +614,22 @@
         je .update_empty_err        ; reject empty input
     .update_id_not_empty:
 
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_id + ecx], 0Ah
+        je .update_id_no_overflow
+        call flush_stdin
+        jmp .update_overflow
+    .update_id_no_overflow:
+
     ;---Validate Update ID is numeric
         mov esi, search_id
         call validate_numeric
         cmp eax, 0
         je .update_id_not_numeric    ; reject non-numeric ID
 
-    ;---Search for the Item by ID
+    ;---Search for the Item by ID  
         mov ecx, [item_count]
         cmp ecx, 0                  ; If count is 0, no items to update
         je .update_not_found
@@ -646,14 +668,15 @@
         mov edx, update_qty_len
         int 80h
 
-        push esi                    ; save record pointer
+    ;---Clear temp_qty buffer before read
+        mov dword [temp_qty], 0
+        mov dword [temp_qty+4], 0
+
         mov eax, 3
         mov ebx, 0
-        mov ecx, esi                ; Copy base address of found record
-        add ecx, 40                 ; Jump 40 bytes down for Qty
+        mov ecx, temp_qty
         mov edx, 8
         int 80h
-        pop esi                     ; restore record pointer
 
     ;---Check for Quantity overflow
         mov ecx, eax
@@ -663,23 +686,20 @@
     ;---Reject empty Update Quantity input
         cmp ecx, 1                  ; only 1 byte read = just newline
         jne .upd_qty_not_empty
-        cmp byte [esi + 40], 0Ah    ; check if first byte is newline
+        cmp byte [temp_qty], 0Ah    ; check if first byte is newline
         je .update_empty_err        ; reject empty input
     .upd_qty_not_empty:
 
         dec ecx
-        add ecx, 40
-        cmp byte [esi + ecx], 0Ah
+        cmp byte [temp_qty + ecx], 0Ah
         je .upd_qty_no_overflow
         call flush_stdin
         jmp .update_overflow
     .upd_qty_no_overflow:
 
     ;---Validate Quantity is numeric
-        lea esi, [esi + 40]
-        sub esi, 40                 ; keep base in ESI for later
-        push esi
-        add esi, 40
+        push esi                    ; preserve record base pointer
+        mov esi, temp_qty
         call validate_numeric
         pop esi
         cmp eax, 0
@@ -692,14 +712,15 @@
         mov edx, update_price_len
         int 80h
 
-        push esi                    ; save record pointer
+    ;---Clear temp_price buffer before read
+        mov dword [temp_price], 0
+        mov dword [temp_price+4], 0
+
         mov eax, 3
         mov ebx, 0
-        mov ecx, esi                ; Copy base address of found record
-        add ecx, 48                 ; Jump 48 bytes down for Price
+        mov ecx, temp_price
         mov edx, 8
         int 80h
-        pop esi                     ; restore record pointer
 
     ;---Check for Price overflow
         mov ecx, eax
@@ -709,25 +730,54 @@
     ;---Reject empty Update Price input
         cmp ecx, 1                  ; only 1 byte read = just newline
         jne .upd_price_not_empty
-        cmp byte [esi + 48], 0Ah    ; check if first byte is newline
+        cmp byte [temp_price], 0Ah  ; check if first byte is newline
         je .update_empty_err        ; reject empty input
     .upd_price_not_empty:
 
         dec ecx
-        add ecx, 48
-        cmp byte [esi + ecx], 0Ah
+        cmp byte [temp_price + ecx], 0Ah
         je .upd_price_no_overflow
         call flush_stdin
         jmp .update_overflow
     .upd_price_no_overflow:
 
     ;---Validate Price is numeric
-        push esi
-        add esi, 48
+        push esi                    ; preserve record base pointer
+        mov esi, temp_price
         call validate_numeric
         pop esi
         cmp eax, 0
         je .update_numeric_err
+
+    ;---Copy valid Quantity to record
+        push esi                    ; preserve record base pointer
+        mov edi, esi
+        add edi, 40                 ; EDI points to record quantity field
+        mov esi, temp_qty           ; ESI points to temp_qty
+        mov ecx, 8
+    .copy_upd_qty:
+        mov al, [esi]
+        mov [edi], al
+        inc esi
+        inc edi
+        dec ecx
+        jnz .copy_upd_qty
+        pop esi                     ; restore record base pointer
+
+    ;---Copy valid Price to record
+        push esi                    ; preserve record base pointer
+        mov edi, esi
+        add edi, 48                 ; EDI points to record price field
+        mov esi, temp_price         ; ESI points to temp_price
+        mov ecx, 8
+    .copy_upd_price:
+        mov al, [esi]
+        mov [edi], al
+        inc esi
+        inc edi
+        dec ecx
+        jnz .copy_upd_price
+        pop esi                     ; restore record base pointer
 
     ;---Confirm Update
         mov eax, 4
@@ -772,9 +822,7 @@
         int 80h
         jmp main_menu
 
-    ;---Prompt for Delete Item
     delete_item:
-
     ;---Prompt for Item ID to Delete
         mov eax, 4
         mov ebx, 1
@@ -798,6 +846,15 @@
         cmp byte [delete_id], 0Ah   ; confirm it's a newline
         je .delete_empty_err        ; reject empty input
     .delete_id_not_empty:
+
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [delete_id + ecx], 0Ah
+        je .delete_id_no_overflow
+        call flush_stdin
+        jmp .delete_overflow
+    .delete_id_no_overflow:
 
     ;---Validate Delete ID is numeric
         mov esi, delete_id
@@ -842,6 +899,14 @@
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    .delete_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
         int 80h
         jmp main_menu
 
@@ -895,6 +960,53 @@
     ;---Search Item
     search_item:
 
+    ;---Display search sub-menu
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_menu_prompt
+        mov edx, search_menu_prompt_len
+        int 80h
+
+    ;---Read search choice
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_choice
+        mov edx, 2
+        int 80h
+
+    ;---Validate search choice length
+        cmp eax, 2
+        jne .search_invalid_choice
+        cmp byte [search_choice+1], 0Ah
+        jne .search_flush_choice
+
+    ;---Route based on choice
+        cmp byte [search_choice], '1'
+        je .search_by_id
+        cmp byte [search_choice], '2'
+        je .search_by_name
+        jmp .search_invalid_choice
+
+    ;---Flush excess choice input
+    .search_flush_choice:
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_choice+1
+        mov edx, 1
+        int 80h
+        cmp byte [search_choice+1], 0Ah
+        jne .search_flush_choice
+
+    .search_invalid_choice:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_invalid_msg
+        mov edx, search_invalid_msg_len
+        int 80h
+        jmp main_menu
+
+    ; SEARCH BY ID
+    .search_by_id:
         mov eax, 4
         mov ebx, 1
         mov ecx, search_id_prompt
@@ -918,6 +1030,15 @@
         je .search_empty_err        ; reject empty input
     .search_id_not_empty:
 
+    ;---Flush excess input if buffer was filled without newline
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_id + ecx], 0Ah
+        je .search_id_no_overflow
+        call flush_stdin
+        jmp .search_overflow
+    .search_id_no_overflow:
+
     ;---Validate Search ID is numeric
         mov esi, search_id
         call validate_numeric
@@ -930,22 +1051,88 @@
 
         mov esi, inventory
 
-    .search_check_loop:
+    .search_id_loop:
     ;---Compare full 8 bytes of ID
         mov eax, [search_id]
         mov ebx, [esi]
         cmp eax, ebx
-        jne .search_check_next
+        jne .search_id_next
         mov eax, [search_id+4]
         mov ebx, [esi+4]
         cmp eax, ebx
         je .search_found
 
-    .search_check_next:
+    .search_id_next:
         add esi, 56
         dec ecx
-        jnz .search_check_loop
+        jnz .search_id_loop
+        jmp .search_not_found
 
+    ; SEARCH BY NAME
+    .search_by_name:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, search_name_prompt
+        mov edx, search_name_prompt_len
+        int 80h
+
+    ;---Clear search_name buffer before read (32 bytes)
+        mov dword [search_name], 0
+        mov dword [search_name+4], 0
+        mov dword [search_name+8], 0
+        mov dword [search_name+12], 0
+        mov dword [search_name+16], 0
+        mov dword [search_name+20], 0
+        mov dword [search_name+24], 0
+        mov dword [search_name+28], 0
+
+        mov eax, 3
+        mov ebx, 0
+        mov ecx, search_name
+        mov edx, 32
+        int 80h
+
+    ;---Reject empty Name input
+        cmp eax, 1
+        jne .search_name_not_empty
+        cmp byte [search_name], 0Ah
+        je .search_empty_err
+    .search_name_not_empty:
+
+    ;---Flush excess name input if too long
+        mov ecx, eax
+        dec ecx
+        cmp byte [search_name + ecx], 0Ah
+        je .search_name_input_ok
+        call flush_stdin
+        jmp .search_name_overflow
+    .search_name_input_ok:
+
+        mov ecx, [item_count]
+        cmp ecx, 0
+        je .search_not_found
+
+        mov esi, inventory
+
+    .search_name_loop:
+        push ecx
+    ;---Compare search_name against record name field (ESI+8)
+        push esi
+        add esi, 8                  ; point to name field in record
+        mov edi, search_name
+        call compare_name           ; EAX = 1 if match, 0 if no match
+        pop esi
+        pop ecx
+        cmp eax, 1
+        je .search_found
+
+    .search_name_next:
+        add esi, 56
+        dec ecx
+        jnz .search_name_loop
+        jmp .search_not_found
+
+    ; SEARCH RESULTS / ERROR HANDLERS
     .search_not_found:
         mov eax, 4
         mov ebx, 1
@@ -954,12 +1141,28 @@
         int 80h
         jmp main_menu
 
-    ;---New handler for empty input errors during Search Item
+    ;---Handler for empty input errors during Search Item
     .search_empty_err:
         mov eax, 4
         mov ebx, 1
         mov ecx, empty_input_msg
         mov edx, empty_input_msg_len
+        int 80h
+        jmp main_menu
+
+    .search_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, overflow_msg
+        mov edx, overflow_msg_len
+        int 80h
+        jmp main_menu
+
+    .search_name_overflow:
+        mov eax, 4
+        mov ebx, 1
+        mov ecx, name_overflow_msg
+        mov edx, name_overflow_msg_len
         int 80h
         jmp main_menu
 
@@ -1462,6 +1665,54 @@
         mov eax, 0
     .vn_done:
         pop ebx
+        pop esi
+        ret
+
+    ; compare_name: Compare two name strings byte-by-byte
+    ;   Input:  ESI = pointer to record name field
+    ;           EDI = pointer to search name input
+    ;   Output: EAX = 1 if match, 0 if no match
+    ;   Preserves ESI, EDI.
+    compare_name:
+        push esi
+        push edi
+        push ebx
+        push ecx
+    .cn_loop:
+        movzx eax, byte [esi]       ; load byte from record name
+        movzx ebx, byte [edi]       ; load byte from search input
+    ;---Check if both strings ended at the same point
+        cmp al, 0Ah
+        je .cn_check_end_a
+        cmp al, 0
+        je .cn_check_end_a
+    ;---Record char is not a terminator; check if search char ended early
+        cmp bl, 0Ah
+        je .cn_no_match              ; search ended but record didn't
+        cmp bl, 0
+        je .cn_no_match
+    ;---Both have valid chars; compare them
+        cmp al, bl
+        jne .cn_no_match
+        inc esi
+        inc edi
+        jmp .cn_loop
+    .cn_check_end_a:
+    ;---Record name ended; check if search name also ended
+        cmp bl, 0Ah
+        je .cn_match
+        cmp bl, 0
+        je .cn_match
+        jmp .cn_no_match             ; search has more chars = no match
+    .cn_match:
+        mov eax, 1
+        jmp .cn_done
+    .cn_no_match:
+        mov eax, 0
+    .cn_done:
+        pop ecx
+        pop ebx
+        pop edi
         pop esi
         ret
 
