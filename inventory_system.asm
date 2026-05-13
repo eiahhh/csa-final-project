@@ -71,7 +71,7 @@
         search_invalid_msg_len equ $ - search_invalid_msg
         search_id_prompt db 0Ah, "Enter Item ID to Search: "
         search_id_len    equ $ - search_id_prompt
-        search_name_prompt db "Enter Item Name to Search: "
+        search_name_prompt db 0Ah, "Enter Item Name to Search: "
         search_name_prompt_len equ $ - search_name_prompt
         
         disp_id          db 0Ah, "ID: "
