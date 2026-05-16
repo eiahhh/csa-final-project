@@ -522,11 +522,60 @@
         cmp eax, 0
         je .add_numeric_err
 
-    ;---Increment & Confirm
+    ;---Increment Item Count
         mov eax, [item_count]
         inc eax                 
         mov [item_count], eax   
 
+    ;---Insertion Sort: Slide new item into sorted position by ID
+        cmp eax, 2
+        jl .sort_done            ; Skip if only 1 item
+
+        dec eax                  ; Get index of the new item
+        imul eax, 56             ; Calculate byte offset
+        mov edi, inventory
+        add edi, eax             ; EDI = pointer to new item
+
+    .sort_loop:
+        cmp edi, inventory       ; If at top, done
+        je .sort_done
+        mov esi, edi
+        sub esi, 56              ; ESI = previous item
+
+        ; Compare IDs as integers
+        push esi
+        push edi
+        call atoi
+        mov ecx, eax             ; ECX = previous ID
+        mov esi, edi
+        call atoi                ; EAX = new ID
+        pop edi
+        pop esi
+
+        cmp ecx, eax
+        jle .sort_done           ; If prev <= new, sorted
+
+        ; Swap the two 56-byte records
+        push esi
+        push edi
+        mov ecx, 14
+    .swap:
+        mov eax, [esi]
+        mov ebx, [edi]
+        mov [esi], ebx
+        mov [edi], eax
+        add esi, 4
+        add edi, 4
+        dec ecx
+        jnz .swap
+        pop edi
+        pop esi
+
+        mov edi, esi             ; Move backward and check again
+        jmp .sort_loop
+
+    .sort_done:
+    ;---Confirm Success
         mov eax, 4
         mov ebx, 1
         mov ecx, success
